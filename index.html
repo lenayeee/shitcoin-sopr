@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana SOPR Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Solana SOPR Analysis</h1>
+            <div class="search-container">
+                <input type="text" id="tokenSearch" placeholder="Enter Solana token address...">
+                <button onclick="searchToken()">Search</button>
+            </div>
+        </header>
+        <div id="chartContainer">
+            <!-- TradingView widget will be inserted here -->
+        </div>
+        <div id="soprData">
+            <!-- SOPR metrics will be displayed here -->
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html> 

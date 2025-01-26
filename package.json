@@ -1,0 +1,12 @@
+{
+  "name": "solana-sopr-tracker",
+  "version": "1.0.0",
+  "description": "Solana SOPR Tracking Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+} 

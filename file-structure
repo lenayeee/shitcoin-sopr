@@ -1,0 +1,7 @@
+project-root/
+├── public/
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
+├── server.js
+└── package.json 
