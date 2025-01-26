@@ -53,8 +53,8 @@ class SoprTracker {
         // Create TradingView widget
         new TradingView.widget({
             container_id: 'chartContainer',
-            symbol: `${pairData.baseToken.symbol}USD`,
-            interval: 'D',
+            symbol: `RAYDIUM:${pairData.baseToken.symbol}USDC`,
+            interval: '60',
             timezone: 'Etc/UTC',
             theme: 'dark',
             style: '1',
@@ -65,6 +65,14 @@ class SoprTracker {
             width: '100%',
             height: 500,
             save_image: false,
+            studies: [
+                'RSI@tv-basicstudies',
+                'MASimple@tv-basicstudies',
+                'MACD@tv-basicstudies'
+            ],
+            show_popup_button: true,
+            popup_width: '1000',
+            popup_height: '650'
         });
     }
 
