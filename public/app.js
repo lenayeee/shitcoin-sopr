@@ -9,18 +9,18 @@ class SoprTracker {
         try {
             console.log('Searching for token:', address);
             const soprContainer = document.getElementById('soprData');
-            soprContainer.innerHTML = '<p>Loading...</p>'; // Add loading indicator
+            soprContainer.innerHTML = '<p>Loading...</p>';
             
-            // Validate Solana address format
             if (!this.isValidSolanaAddress(address)) {
                 throw new Error('Invalid Solana address format');
             }
 
-            console.log('Fetching data from DexScreener...');
             // Fetch token data from DexScreener
             const response = await fetch(`${this.dexscreenerApiUrl}${address}`);
             const data = await response.json();
-            console.log('DexScreener data:', data);
+            
+            // Log the full response for debugging
+            console.log('DexScreener full response:', data);
             
             if (!data.pairs || data.pairs.length === 0) {
                 throw new Error('Token not found on DexScreener');
@@ -28,7 +28,6 @@ class SoprTracker {
 
             // Calculate SOPR
             const soprData = await this.calculateSOPR(address);
-            console.log('SOPR data:', soprData);
             
             // Update UI with chart and metrics
             this.updateChart(data.pairs[0]);
@@ -53,34 +52,56 @@ class SoprTracker {
         
         console.log('Updating chart with pair data:', pairData);
         
-        // Extract the correct trading pair
-        const symbol = `${pairData.dexId}:${pairData.baseToken.symbol}${pairData.quoteToken.symbol}`;
+        // Get the exact symbol from DexScreener's pair data
+        const symbol = pairData.pairAddress;  // This should be the unique identifier for the pair
+        
         console.log('Chart symbol:', symbol);
 
-        // Create TradingView widget
-        new TradingView.widget({
-            container_id: 'chartContainer',
-            symbol: symbol,
-            interval: '60',
-            timezone: 'Etc/UTC',
-            theme: 'dark',
-            style: '1',
-            locale: 'en',
-            toolbar_bg: '#f1f3f6',
-            enable_publishing: false,
-            allow_symbol_change: true,
-            width: '100%',
-            height: 500,
-            save_image: false,
-            studies: [
-                'RSI@tv-basicstudies',
-                'MASimple@tv-basicstudies',
-                'MACD@tv-basicstudies'
-            ],
-            show_popup_button: true,
-            popup_width: '1000',
-            popup_height: '650'
-        });
+        try {
+            // Create TradingView widget with error handling
+            new TradingView.widget({
+                container_id: 'chartContainer',
+                // Use DexScreener's market URL format
+                symbol: `DEX:${symbol}`,
+                interval: '60',
+                timezone: 'Etc/UTC',
+                theme: 'dark',
+                style: '1',
+                locale: 'en',
+                toolbar_bg: '#f1f3f6',
+                enable_publishing: false,
+                allow_symbol_change: true,
+                width: '100%',
+                height: 500,
+                save_image: false,
+                studies: [
+                    'RSI@tv-basicstudies',
+                    'MASimple@tv-basicstudies',
+                    'MACD@tv-basicstudies'
+                ],
+                show_popup_button: true,
+                popup_width: '1000',
+                popup_height: '650',
+                onLoadError: function() {
+                    // Log the full pair data for debugging
+                    console.error('Failed to load TradingView chart. Pair data:', pairData);
+                    chartContainer.innerHTML = `
+                        <div class="error">
+                            <p>Unable to load chart.</p>
+                            <p>Token Info:</p>
+                            <pre>${JSON.stringify(pairData, null, 2)}</pre>
+                        </div>
+                    `;
+                }
+            });
+        } catch (error) {
+            console.error('Error creating TradingView widget:', error);
+            chartContainer.innerHTML = `
+                <div class="error">
+                    Error loading chart: ${error.message}
+                </div>
+            `;
+        }
     }
 
     async calculateSOPR(address) {
