@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Solana SOPR Tracker</title>
     <link rel="stylesheet" href="styles.css">
-    <!-- Update TradingView Widget -->
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js"></script>
+    <!-- Replace TradingView with Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Add Solana Web3 -->
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
 </head>
@@ -21,7 +20,7 @@
             </div>
         </header>
         <div id="chartContainer">
-            <!-- TradingView widget will be inserted here -->
+            <canvas id="tokenChart"></canvas>
         </div>
         <div id="soprData">
             <!-- SOPR metrics will be displayed here -->

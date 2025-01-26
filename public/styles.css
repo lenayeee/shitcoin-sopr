@@ -33,6 +33,14 @@ button {
     width: 100%;
     border: 1px solid #ddd;
     border-radius: 4px;
+    background-color: #1e222d;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+#tokenChart {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 #soprData {

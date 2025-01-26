@@ -2,6 +2,7 @@ class SoprTracker {
     constructor() {
         this.dexscreenerApiUrl = 'https://api.dexscreener.com/latest/dex/tokens/';
         this.historicalData = []; // Store historical SOPR values
+        this.chart = null;
         console.log('SoprTracker initialized');
     }
 
@@ -30,7 +31,7 @@ class SoprTracker {
             const soprData = await this.calculateSOPR(address);
             
             // Update UI with chart and metrics
-            this.updateChart(data.pairs[0]);
+            await this.updateChart(data.pairs[0]);
             this.displaySoprMetrics(soprData);
         } catch (error) {
             console.error('Error:', error);
@@ -46,62 +47,85 @@ class SoprTracker {
         return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
     }
 
-    updateChart(pairData) {
-        const chartContainer = document.getElementById('chartContainer');
-        chartContainer.innerHTML = ''; // Clear previous chart
+    async updateChart(pairData) {
+        const ctx = document.getElementById('tokenChart').getContext('2d');
         
-        console.log('Updating chart with pair data:', pairData);
-        
-        // Get the exact symbol from DexScreener's pair data
-        const symbol = pairData.pairAddress;  // This should be the unique identifier for the pair
-        
-        console.log('Chart symbol:', symbol);
+        // Destroy existing chart if it exists
+        if (this.chart) {
+            this.chart.destroy();
+        }
 
         try {
-            // Create TradingView widget with error handling
-            new TradingView.widget({
-                container_id: 'chartContainer',
-                // Use DexScreener's market URL format
-                symbol: `DEX:${symbol}`,
-                interval: '60',
-                timezone: 'Etc/UTC',
-                theme: 'dark',
-                style: '1',
-                locale: 'en',
-                toolbar_bg: '#f1f3f6',
-                enable_publishing: false,
-                allow_symbol_change: true,
-                width: '100%',
-                height: 500,
-                save_image: false,
-                studies: [
-                    'RSI@tv-basicstudies',
-                    'MASimple@tv-basicstudies',
-                    'MACD@tv-basicstudies'
-                ],
-                show_popup_button: true,
-                popup_width: '1000',
-                popup_height: '650',
-                onLoadError: function() {
-                    // Log the full pair data for debugging
-                    console.error('Failed to load TradingView chart. Pair data:', pairData);
-                    chartContainer.innerHTML = `
-                        <div class="error">
-                            <p>Unable to load chart.</p>
-                            <p>Token Info:</p>
-                            <pre>${JSON.stringify(pairData, null, 2)}</pre>
-                        </div>
-                    `;
+            // Fetch historical price data
+            const priceData = await this.fetchHistoricalPrices(pairData.pairAddress);
+            
+            // Create new chart
+            this.chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: priceData.timestamps,
+                    datasets: [{
+                        label: `${pairData.baseToken.symbol} Price`,
+                        data: priceData.prices,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: `${pairData.baseToken.symbol}/${pairData.quoteToken.symbol} Price Chart`
+                        },
+                        legend: {
+                            position: 'top',
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    }
                 }
             });
         } catch (error) {
-            console.error('Error creating TradingView widget:', error);
-            chartContainer.innerHTML = `
+            console.error('Error creating chart:', error);
+            document.getElementById('chartContainer').innerHTML = `
                 <div class="error">
                     Error loading chart: ${error.message}
                 </div>
             `;
         }
+    }
+
+    async fetchHistoricalPrices(pairAddress) {
+        // This is a placeholder - you'll need to implement actual historical data fetching
+        // You could use DexScreener's API or another data source
+        const timestamps = [];
+        const prices = [];
+        const now = Date.now();
+        
+        // Generate sample data for the last 30 days
+        for (let i = 30; i >= 0; i--) {
+            timestamps.push(new Date(now - i * 24 * 60 * 60 * 1000).toLocaleDateString());
+            prices.push(Math.random() * 100); // Replace with actual price data
+        }
+        
+        return { timestamps, prices };
     }
 
     async calculateSOPR(address) {
