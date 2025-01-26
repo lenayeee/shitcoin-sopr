@@ -3,6 +3,17 @@ class SoprTracker {
         this.dexscreenerApiUrl = 'https://api.dexscreener.com/latest/dex/tokens/';
         this.historicalData = []; // Store historical SOPR values
         this.chart = null;
+        
+        // Rate limiting settings
+        this.requestQueue = [];
+        this.isProcessingQueue = false;
+        this.rateLimit = {
+            maxRequests: 10,    // Maximum requests per time window
+            timeWindow: 60000,  // Time window in milliseconds (1 minute)
+            requestCount: 0,
+            lastReset: Date.now()
+        };
+        
         console.log('SoprTracker initialized');
     }
 
@@ -130,31 +141,44 @@ class SoprTracker {
 
     async calculateSOPR(address) {
         try {
-            // This would need to be connected to a Solana blockchain API
-            const transactions = await this.getWalletTransactions(address);
+            console.log('Calculating SOPR for address:', address);
             
-            let totalProfit = 0;
-            let totalTransactions = 0;
-            
-            for (const tx of transactions) {
-                const buyPrice = tx.initialBuyPrice;  // USD value when bought
-                const currentPrice = tx.currentPrice;  // USD value when sold/moved
+            // Get current token price from DexScreener
+            const dexScreenerResponse = await fetch(`${this.dexscreenerApiUrl}${address}`);
+            const dexData = await dexScreenerResponse.json();
+            const currentPrice = dexData.pairs[0].priceUsd;
+
+            // Get holder data from Solscan
+            const holders = await this.getTokenHolders(address);
+            console.log('Token holders:', holders);
+
+            let totalSopr = 0;
+            let validTransactions = 0;
+
+            for (const holder of holders) {
+                const holderTransactions = await this.getHolderTransactions(address, holder.address);
                 
-                if (buyPrice && currentPrice) {
-                    const profit = (currentPrice - buyPrice) / buyPrice;
-                    totalProfit += profit;
-                    totalTransactions++;
+                // Get first buy transaction
+                const firstBuy = holderTransactions.find(tx => tx.type === 'buy');
+                // Get last sell transaction (if exists)
+                const lastSell = holderTransactions.reverse().find(tx => tx.type === 'sell');
+
+                if (firstBuy && lastSell) {
+                    const sopr = lastSell.priceUsd / firstBuy.priceUsd;
+                    totalSopr += sopr;
+                    validTransactions++;
                 }
             }
-            
-            const sopr = totalTransactions > 0 ? totalProfit / totalTransactions : 0;
-            
+
+            const averageSopr = validTransactions > 0 ? totalSopr / validTransactions : 0;
+            console.log('Calculated SOPR:', averageSopr);
+
             return {
-                currentSopr: sopr,
-                averageSopr: this.calculateMovingAverage(sopr),
-                soprTrend: this.calculateTrend(sopr),
-                isProfit: sopr > 0,
-                trend: this.getTrendDescription(sopr)
+                currentSopr: averageSopr,
+                averageSopr: this.calculateMovingAverage(averageSopr),
+                soprTrend: this.calculateTrend(averageSopr),
+                isProfit: averageSopr > 1,
+                trend: this.getTrendDescription(averageSopr)
             };
         } catch (error) {
             console.error('Error calculating SOPR:', error);
@@ -168,51 +192,61 @@ class SoprTracker {
         }
     }
 
-    // Helper methods for SOPR calculation
-    getTrendDescription(sopr) {
-        if (sopr > 0) {
-            return 'Coins are currently in profit overall';
-        } else if (sopr < 0) {
-            return 'Coins are currently being sold at a loss';
-        }
-        return 'Break-even point';
-    }
-
-    async getWalletTransactions(address) {
+    async getTokenHolders(tokenAddress) {
         try {
-            // Using Solana Web3.js to get transaction history
-            const connection = new solanaWeb3.Connection(
-                'https://api.mainnet-beta.solana.com'
-            );
-            
-            const transactions = await connection.getConfirmedSignaturesForAddress2(
-                new solanaWeb3.PublicKey(address),
-                { limit: 100 } // Get last 100 transactions
-            );
-
-            const processedTxs = [];
-            
-            for (const tx of transactions) {
-                const txInfo = await connection.getTransaction(tx.signature);
-                if (txInfo && txInfo.meta) {
-                    const timestamp = txInfo.blockTime * 1000; // Convert to milliseconds
-                    const preBalance = txInfo.meta.preBalances[0];
-                    const postBalance = txInfo.meta.postBalances[0];
-                    
-                    processedTxs.push({
-                        timestamp,
-                        initialBuyPrice: preBalance / 1e9, // Convert lamports to SOL
-                        currentPrice: postBalance / 1e9,
-                        type: preBalance > postBalance ? 'sell' : 'buy'
-                    });
+            const data = await this.rateLimitedRequest(
+                `https://public-api.solscan.io/token/holders?tokenAddress=${tokenAddress}`,
+                {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
                 }
-            }
+            );
             
-            return processedTxs;
+            console.log('Solscan holders data:', data);
+            return data.data || [];
         } catch (error) {
-            console.error('Error fetching transactions:', error);
+            console.error('Error fetching token holders:', error);
             return [];
         }
+    }
+
+    async getHolderTransactions(tokenAddress, holderAddress) {
+        try {
+            const data = await this.rateLimitedRequest(
+                `https://public-api.solscan.io/account/token/txs?token_address=${tokenAddress}&account=${holderAddress}`,
+                {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                }
+            );
+            
+            console.log(`Transactions for holder ${holderAddress}:`, data);
+            
+            return data.map(tx => ({
+                timestamp: tx.blockTime * 1000,
+                type: this.determineTransactionType(tx),
+                priceUsd: tx.price || 0,
+                amount: tx.amount || 0
+            }));
+        } catch (error) {
+            console.error('Error fetching holder transactions:', error);
+            return [];
+        }
+    }
+
+    determineTransactionType(tx) {
+        // Logic to determine if transaction is buy or sell
+        // This will depend on Solscan's transaction data structure
+        if (tx.changeAmount > 0) {
+            return 'buy';
+        } else if (tx.changeAmount < 0) {
+            return 'sell';
+        }
+        return 'unknown';
     }
 
     calculateMovingAverage(currentSopr, period = 14) {
@@ -267,6 +301,16 @@ class SoprTracker {
         return { slope, intercept };
     }
 
+    // Helper methods for SOPR calculation
+    getTrendDescription(sopr) {
+        if (sopr > 1) {
+            return 'Holders are in profit';
+        } else if (sopr < 1) {
+            return 'Holders are at a loss';
+        }
+        return 'Break-even point';
+    }
+
     // Update the displaySoprMetrics to include trend information
     displaySoprMetrics(soprData) {
         const soprContainer = document.getElementById('soprData');
@@ -290,6 +334,65 @@ class SoprTracker {
                     <li>Trending Up ${trendArrow}: Increasing realized profits</li>
                     <li>Trending Down ${trendArrow}: Decreasing realized profits</li>
                 </ul>
+            </div>
+        `;
+    }
+
+    // Add rate limiting helper methods
+    async rateLimitedRequest(url, options = {}) {
+        return new Promise((resolve, reject) => {
+            this.requestQueue.push({ url, options, resolve, reject });
+            this.processQueue();
+        });
+    }
+
+    async processQueue() {
+        if (this.isProcessingQueue || this.requestQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+
+        try {
+            // Check if we need to reset the counter
+            const now = Date.now();
+            if (now - this.rateLimit.lastReset >= this.rateLimit.timeWindow) {
+                this.rateLimit.requestCount = 0;
+                this.rateLimit.lastReset = now;
+            }
+
+            // Process queue if we haven't hit the rate limit
+            while (this.requestQueue.length > 0 && this.rateLimit.requestCount < this.rateLimit.maxRequests) {
+                const request = this.requestQueue.shift();
+                this.rateLimit.requestCount++;
+
+                try {
+                    const response = await fetch(request.url, request.options);
+                    const data = await response.json();
+                    request.resolve(data);
+                } catch (error) {
+                    request.reject(error);
+                }
+
+                // Add delay between requests
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+
+            // If we hit the rate limit, schedule the next batch
+            if (this.requestQueue.length > 0) {
+                const timeToReset = this.rateLimit.timeWindow - (Date.now() - this.rateLimit.lastReset);
+                setTimeout(() => this.processQueue(), timeToReset);
+            }
+        } finally {
+            this.isProcessingQueue = false;
+        }
+    }
+
+    // Add progress indicator for UI
+    updateProgress(current, total) {
+        const soprContainer = document.getElementById('soprData');
+        soprContainer.innerHTML = `
+            <div class="progress">
+                <p>Processing holders: ${current}/${total}</p>
+                <div class="progress-bar" style="width: ${(current/total) * 100}%"></div>
             </div>
         `;
     }

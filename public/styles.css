@@ -92,4 +92,23 @@ button {
 
 .sopr-trend-strength::before {
     content: '📊 ';
+}
+
+.progress {
+    margin: 20px 0;
+    background-color: #1e222d;
+    border-radius: 4px;
+    padding: 10px;
+}
+
+.progress-bar {
+    height: 20px;
+    background-color: #4CAF50;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress p {
+    margin-bottom: 5px;
+    color: #fff;
 } 
