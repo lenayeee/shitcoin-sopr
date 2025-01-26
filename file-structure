@@ -4,4 +4,5 @@ project-root/
 │   ├── styles.css
 │   └── app.js
 ├── server.js
-└── package.json 
+├── package.json
+└── .gitignore 

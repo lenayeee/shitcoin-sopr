@@ -1,10 +1,12 @@
 class SoprTracker {
     constructor() {
         this.dexscreenerApiUrl = 'https://api.dexscreener.com/latest/dex/tokens/';
+        console.log('SoprTracker initialized');
     }
 
     async searchToken(address) {
         try {
+            console.log('Searching for token:', address);
             const soprContainer = document.getElementById('soprData');
             soprContainer.innerHTML = '<p>Loading...</p>'; // Add loading indicator
             
@@ -13,9 +15,11 @@ class SoprTracker {
                 throw new Error('Invalid Solana address format');
             }
 
+            console.log('Fetching data from DexScreener...');
             // Fetch token data from DexScreener
             const response = await fetch(`${this.dexscreenerApiUrl}${address}`);
             const data = await response.json();
+            console.log('DexScreener data:', data);
             
             if (!data.pairs || data.pairs.length === 0) {
                 throw new Error('Token not found on DexScreener');
@@ -23,6 +27,7 @@ class SoprTracker {
 
             // Calculate SOPR
             const soprData = await this.calculateSOPR(address);
+            console.log('SOPR data:', soprData);
             
             // Update UI with chart and metrics
             this.updateChart(data.pairs[0]);
