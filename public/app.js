@@ -27,28 +27,27 @@ class SoprTracker {
                 throw new Error('Invalid Solana address format');
             }
 
-            // Fetch token data from DexScreener
-            const response = await fetch(`${this.dexscreenerApiUrl}${address}`);
-            const data = await response.json();
+            // Get token data from Solscan
+            const tokenData = await this.getTokenHistory(address);
+            console.log('Solscan token data:', tokenData);
             
-            // Log the full response for debugging
-            console.log('DexScreener full response:', data);
-            
-            if (!data.pairs || data.pairs.length === 0) {
-                throw new Error('Token not found on DexScreener');
+            if (!tokenData) {
+                throw new Error('Token not found on Solscan');
             }
 
             // Calculate SOPR
             const soprData = await this.calculateSOPR(address);
             
             // Update UI with chart and metrics
-            await this.updateChart(data.pairs[0]);
+            await this.updateChart(address, tokenData);
             this.displaySoprMetrics(soprData);
         } catch (error) {
             console.error('Error:', error);
             document.getElementById('soprData').innerHTML = `
                 <div class="error">
-                    Error: ${error.message}
+                    <h3>Error</h3>
+                    <p>${error.message}</p>
+                    <p>Please try again with a valid token address.</p>
                 </div>
             `;
         }
@@ -58,7 +57,7 @@ class SoprTracker {
         return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
     }
 
-    async updateChart(pairData) {
+    async updateChart(tokenAddress, tokenData) {
         const ctx = document.getElementById('tokenChart').getContext('2d');
         
         // Destroy existing chart if it exists
@@ -67,8 +66,8 @@ class SoprTracker {
         }
 
         try {
-            // Fetch historical price data
-            const priceData = await this.fetchHistoricalPrices(pairData.pairAddress);
+            // Format Solscan price data
+            const priceData = this.formatPriceData(tokenData);
             
             // Create new chart
             this.chart = new Chart(ctx, {
@@ -76,7 +75,7 @@ class SoprTracker {
                 data: {
                     labels: priceData.timestamps,
                     datasets: [{
-                        label: `${pairData.baseToken.symbol} Price`,
+                        label: `Token Price`,
                         data: priceData.prices,
                         borderColor: 'rgb(75, 192, 192)',
                         tension: 0.1,
@@ -88,7 +87,7 @@ class SoprTracker {
                     plugins: {
                         title: {
                             display: true,
-                            text: `${pairData.baseToken.symbol}/${pairData.quoteToken.symbol} Price Chart`
+                            text: `Price Chart`
                         },
                         legend: {
                             position: 'top',
@@ -123,130 +122,173 @@ class SoprTracker {
         }
     }
 
-    async fetchHistoricalPrices(pairAddress) {
-        // This is a placeholder - you'll need to implement actual historical data fetching
-        // You could use DexScreener's API or another data source
+    formatPriceData(tokenData) {
+        // Format Solscan price data for Chart.js
         const timestamps = [];
         const prices = [];
-        const now = Date.now();
-        
-        // Generate sample data for the last 30 days
-        for (let i = 30; i >= 0; i--) {
-            timestamps.push(new Date(now - i * 24 * 60 * 60 * 1000).toLocaleDateString());
-            prices.push(Math.random() * 100); // Replace with actual price data
+
+        if (tokenData && tokenData.priceHistory) {
+            tokenData.priceHistory.forEach(point => {
+                timestamps.push(new Date(point.time * 1000).toLocaleDateString());
+                prices.push(point.price);
+            });
         }
-        
+
         return { timestamps, prices };
+    }
+
+    async getTokenHistory(tokenAddress) {
+        try {
+            // Get historical data from Solscan
+            const response = await this.rateLimitedRequest(
+                `https://public-api.solscan.io/market/token/${tokenAddress}`,
+                {
+                    headers: {
+                        'Accept': 'application/json',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                }
+            );
+
+            console.log('Solscan token history:', response);
+            return response;
+        } catch (error) {
+            console.error('Error fetching token history:', error);
+            return null;
+        }
     }
 
     async calculateSOPR(address) {
         try {
-            console.log('Calculating SOPR for address:', address);
-            
-            // Get current token price from DexScreener
-            const dexScreenerResponse = await fetch(`${this.dexscreenerApiUrl}${address}`);
-            const dexData = await dexScreenerResponse.json();
-            const currentPrice = dexData.pairs[0].priceUsd;
+            console.log('Starting SOPR calculation for address:', address);
+            const soprContainer = document.getElementById('soprData');
+            soprContainer.innerHTML = '<p>Fetching token data...</p>';
 
-            // Get holder data from Solscan
+            // Get token history from Solscan
+            const tokenHistory = await this.getTokenHistory(address);
+            if (!tokenHistory) {
+                throw new Error('Unable to fetch token history');
+            }
+
+            // Get holder transactions
             const holders = await this.getTokenHolders(address);
-            console.log('Token holders:', holders);
+            console.log('Found holders:', holders.length);
 
+            this.updateProgress(0, holders.length);
             let totalSopr = 0;
             let validTransactions = 0;
 
-            for (const holder of holders) {
-                const holderTransactions = await this.getHolderTransactions(address, holder.address);
-                
-                // Get first buy transaction
-                const firstBuy = holderTransactions.find(tx => tx.type === 'buy');
-                // Get last sell transaction (if exists)
-                const lastSell = holderTransactions.reverse().find(tx => tx.type === 'sell');
+            for (let i = 0; i < holders.length; i++) {
+                const holder = holders[i];
+                this.updateProgress(i + 1, holders.length);
 
-                if (firstBuy && lastSell) {
-                    const sopr = lastSell.priceUsd / firstBuy.priceUsd;
-                    totalSopr += sopr;
-                    validTransactions++;
+                try {
+                    // Get holder's transaction history from Solscan
+                    const holderTransactions = await this.rateLimitedRequest(
+                        `https://public-api.solscan.io/account/token/txs?token_address=${address}&account=${holder.address}`,
+                        {
+                            headers: {
+                                'Accept': 'application/json',
+                                'User-Agent': 'Mozilla/5.0'
+                            }
+                        }
+                    );
+
+                    if (holderTransactions && holderTransactions.length > 0) {
+                        // Sort transactions by timestamp
+                        const sortedTxs = holderTransactions.sort((a, b) => a.blockTime - b.blockTime);
+                        
+                        // Find first buy and last sell
+                        const firstBuy = sortedTxs.find(tx => tx.changeAmount > 0);
+                        const lastSell = [...sortedTxs].reverse().find(tx => tx.changeAmount < 0);
+
+                        if (firstBuy && lastSell) {
+                            // Get prices at buy and sell times
+                            const buyPrice = this.getPriceAtTimestamp(tokenHistory, firstBuy.blockTime);
+                            const sellPrice = this.getPriceAtTimestamp(tokenHistory, lastSell.blockTime);
+
+                            if (buyPrice && sellPrice) {
+                                const sopr = sellPrice / buyPrice;
+                                console.log(`SOPR for holder ${holder.address}:`, {
+                                    buyPrice,
+                                    sellPrice,
+                                    sopr
+                                });
+                                totalSopr += sopr;
+                                validTransactions++;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error processing holder ${holder.address}:`, error);
                 }
             }
 
             const averageSopr = validTransactions > 0 ? totalSopr / validTransactions : 0;
-            console.log('Calculated SOPR:', averageSopr);
-
             return {
                 currentSopr: averageSopr,
                 averageSopr: this.calculateMovingAverage(averageSopr),
                 soprTrend: this.calculateTrend(averageSopr),
                 isProfit: averageSopr > 1,
-                trend: this.getTrendDescription(averageSopr)
+                trend: this.getTrendDescription(averageSopr),
+                holders: holders.length,
+                validTransactions
             };
         } catch (error) {
-            console.error('Error calculating SOPR:', error);
-            return {
-                currentSopr: 0,
-                averageSopr: 0,
-                soprTrend: [],
-                isProfit: false,
-                trend: 'Unable to calculate'
-            };
+            console.error('Error in SOPR calculation:', error);
+            throw new Error(`SOPR calculation failed: ${error.message}`);
         }
+    }
+
+    getPriceAtTimestamp(tokenHistory, timestamp) {
+        // Find the closest price data point to the given timestamp
+        const pricePoint = tokenHistory.find(point => 
+            Math.abs(point.timestamp - timestamp) < 3600 // Within 1 hour
+        );
+        return pricePoint ? pricePoint.price : null;
     }
 
     async getTokenHolders(tokenAddress) {
         try {
-            const data = await this.rateLimitedRequest(
-                `https://public-api.solscan.io/token/holders?tokenAddress=${tokenAddress}`,
-                {
-                    headers: {
-                        'Accept': 'application/json',
-                        'User-Agent': 'Mozilla/5.0'
-                    }
-                }
+            const connection = new solanaWeb3.Connection(
+                'https://api.mainnet-beta.solana.com',
+                'confirmed'
             );
+
+            // Get the token mint info
+            const mintPubkey = new solanaWeb3.PublicKey(tokenAddress);
+            const mintInfo = await connection.getAccountInfo(mintPubkey);
             
-            console.log('Solscan holders data:', data);
-            return data.data || [];
+            if (!mintInfo) {
+                throw new Error('Token not found');
+            }
+
+            console.log('Getting token accounts...');
+            // Get all token accounts for this mint
+            const tokenAccounts = await connection.getTokenLargestAccounts(mintPubkey);
+            console.log('Token accounts:', tokenAccounts);
+
+            // Get detailed info for each holder
+            const holders = await Promise.all(
+                tokenAccounts.value.map(async account => {
+                    const accountInfo = await connection.getParsedAccountInfo(account.address);
+                    const parsedInfo = accountInfo.value.data.parsed.info;
+                    
+                    return {
+                        address: parsedInfo.owner,
+                        amount: account.amount,
+                        uiAmount: account.uiAmount,
+                        decimals: parsedInfo.tokenAmount.decimals
+                    };
+                })
+            );
+
+            console.log('Processed holders:', holders);
+            return holders.filter(h => h.uiAmount > 0); // Only return active holders
         } catch (error) {
             console.error('Error fetching token holders:', error);
-            return [];
+            throw new Error(`Failed to fetch holders: ${error.message}`);
         }
-    }
-
-    async getHolderTransactions(tokenAddress, holderAddress) {
-        try {
-            const data = await this.rateLimitedRequest(
-                `https://public-api.solscan.io/account/token/txs?token_address=${tokenAddress}&account=${holderAddress}`,
-                {
-                    headers: {
-                        'Accept': 'application/json',
-                        'User-Agent': 'Mozilla/5.0'
-                    }
-                }
-            );
-            
-            console.log(`Transactions for holder ${holderAddress}:`, data);
-            
-            return data.map(tx => ({
-                timestamp: tx.blockTime * 1000,
-                type: this.determineTransactionType(tx),
-                priceUsd: tx.price || 0,
-                amount: tx.amount || 0
-            }));
-        } catch (error) {
-            console.error('Error fetching holder transactions:', error);
-            return [];
-        }
-    }
-
-    determineTransactionType(tx) {
-        // Logic to determine if transaction is buy or sell
-        // This will depend on Solscan's transaction data structure
-        if (tx.changeAmount > 0) {
-            return 'buy';
-        } else if (tx.changeAmount < 0) {
-            return 'sell';
-        }
-        return 'unknown';
     }
 
     calculateMovingAverage(currentSopr, period = 14) {
@@ -320,20 +362,33 @@ class SoprTracker {
         
         soprContainer.innerHTML = `
             <h2>SOPR Metrics</h2>
-            <p>Current SOPR: <span style="color: ${trendColor}">${soprData.currentSopr.toFixed(4)}</span></p>
-            <p>Average SOPR (14-day): ${soprData.averageSopr.toFixed(4)}</p>
-            <p>Trend: ${soprData.trend} ${trendArrow}</p>
-            <div class="sopr-trend-strength">
-                Trend Strength: ${(soprData.soprTrend.strength || 0).toFixed(2)}
+            <div class="sopr-metrics">
+                <p>Current SOPR: <span style="color: ${trendColor}">${soprData.currentSopr.toFixed(4)}</span></p>
+                <p>Average SOPR (14-day): ${soprData.averageSopr.toFixed(4)}</p>
+                <p>Total Holders Analyzed: ${soprData.holders}</p>
+                <p>Valid Transactions: ${soprData.validTransactions}</p>
+                <p>Trend: ${soprData.trend} ${trendArrow}</p>
+                <div class="sopr-trend-strength">
+                    Trend Strength: ${(soprData.soprTrend.strength || 0).toFixed(2)}
+                </div>
             </div>
             <div class="sopr-explanation">
-                <h3>What does this mean?</h3>
+                <h3>Understanding SOPR (Spent Output Profit Ratio)</h3>
+                <p>SOPR measures the profit ratio of tokens being moved by comparing their value when bought vs when sold.</p>
                 <ul>
-                    <li>SOPR > 0: Coins are in profit</li>
-                    <li>SOPR < 0: Coins are at a loss</li>
-                    <li>Trending Up ${trendArrow}: Increasing realized profits</li>
-                    <li>Trending Down ${trendArrow}: Decreasing realized profits</li>
+                    <li>SOPR > 1: Tokens are being sold in profit</li>
+                    <li>SOPR < 1: Tokens are being sold at a loss</li>
+                    <li>SOPR = 1: Break-even point</li>
                 </ul>
+                <div class="sopr-formula">
+                    <h4>Formula:</h4>
+                    <p>SOPR = Value when sold (USD) / Value when bought (USD)</p>
+                </div>
+                <div class="sopr-interpretation">
+                    <h4>Current Status:</h4>
+                    <p>${soprData.trend}</p>
+                    <p>Trend Direction: ${soprData.soprTrend.direction} ${trendArrow}</p>
+                </div>
             </div>
         `;
     }
